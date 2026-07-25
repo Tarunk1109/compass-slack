@@ -1,0 +1,17 @@
+# Secrets
+.env
+
+# Generated caches
+.cache/
+__pycache__/
+*.pyc
+
+# Local Qdrant storage volume
+qdrant_data/
+
+# Virtualenv
+.venv/
+
+# Local editor and tooling config
+.claude/
+.DS_Store

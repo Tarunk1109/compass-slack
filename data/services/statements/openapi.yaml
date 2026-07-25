@@ -1,0 +1,139 @@
+openapi: 3.1.0
+info:
+  title: statements-service
+  version: "1.1"
+  description: Account statement generation and retrieval API.
+
+servers:
+  - url: https://api.northbank.internal/statements
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: statements-controller
+
+paths:
+  /api/statements/generate:
+    post:
+      operationId: generateUsingPOST
+      summary: Generate a statement
+      description: >
+        Generates a statement for an account over a date range by pulling
+        entries from the ledger service. Generation is asynchronous.
+      tags: [statements-controller]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenerateStatementRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/statements:
+    get:
+      operationId: getUsingGET_1
+      summary: getUsingGET_1
+      tags: [statements-controller]
+      parameters:
+        - name: accountId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/StatementResponse' }
+
+  /api/statements/{statementId}:
+    get:
+      operationId: getUsingGET
+      summary: getUsingGET
+      tags: [statements-controller]
+      parameters:
+        - name: statementId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/statements/{statementId}/download:
+    get:
+      operationId: downloadUsingGET_1
+      summary: downloadUsingGET_1
+      tags: [statements-controller]
+      parameters:
+        - name: statementId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    GenerateStatementRequest:
+      type: object
+      required: [accountId, fromDate, toDate]
+      properties:
+        accountId: { type: string }
+        fromDate: { type: string, format: date }
+        toDate: { type: string, format: date }
+
+    StatementResponse:
+      type: object
+      properties:
+        statementId: { type: string }
+        accountId: { type: string }
+        fromDate: { type: string, format: date }
+        toDate: { type: string, format: date }
+        status:
+          type: string
+          enum: [GENERATING, READY, FAILED]
+        createdAt: { type: string, format: date-time }
+
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp: { type: string, format: date-time }
+        status: { type: integer }
+        error: { type: string }
+        path: { type: string }

@@ -1,0 +1,260 @@
+openapi: 3.1.0
+info:
+  title: fraud-service
+  version: "0.9"
+  description: Fraud detection and case management API.
+
+servers:
+  - url: https://api.northbank.internal/fraud
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: fraud-controller
+
+paths:
+  /api/fraud/checks:
+    post:
+      operationId: checkUsingPOST
+      summary: Run a fraud pre-authorization check
+      description: >
+        Runs a synchronous fraud check against an entity (payment, card
+        transaction, etc.) and returns a decision. Callers should treat any
+        failure to get a response as a decline; this service does not
+        guarantee a response within any particular time budget.
+      tags: [fraud-controller]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FraudCheckRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FraudCheckResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/fraud/checks/{checkId}:
+    get:
+      operationId: getUsingGET
+      summary: getUsingGET
+      tags: [fraud-controller]
+      parameters:
+        - name: checkId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FraudCheckResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/fraud/rules:
+    post:
+      operationId: createRuleUsingPOST
+      summary: createRuleUsingPOST
+      tags: [fraud-controller]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RuleRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Rule' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    get:
+      operationId: getUsingGET_1
+      summary: getUsingGET_1
+      tags: [fraud-controller]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Rule' }
+
+  /api/fraud/rules/{ruleId}:
+    get:
+      operationId: getUsingGET_2
+      summary: getUsingGET_2
+      tags: [fraud-controller]
+      parameters:
+        - name: ruleId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Rule' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/fraud/cases:
+    post:
+      operationId: createUsingPOST_1
+      summary: createUsingPOST_1
+      tags: [fraud-controller]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CaseRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Case' }
+
+  /api/fraud/cases/{caseId}:
+    get:
+      operationId: getUsingGET_3
+      summary: getUsingGET_3
+      tags: [fraud-controller]
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Case' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: number }
+        currency: { type: string }
+
+    Entity:
+      type: object
+      required: [entityType, entityId, amount]
+      properties:
+        entityType:
+          type: string
+          enum: [PAYMENT, CARD_TXN, TRANSFER]
+        entityId: { type: string }
+        amount: { $ref: '#/components/schemas/Money' }
+        channel: { type: string }
+
+    FraudCheckRequest:
+      type: object
+      required: [entity]
+      properties:
+        entity: { $ref: '#/components/schemas/Entity' }
+        customerId: { type: string }
+
+    Decision:
+      type: object
+      properties:
+        outcome:
+          type: string
+          enum: [APPROVE, REVIEW, DECLINE]
+        score:
+          type: number
+          description: 0.0 to 1.0, higher is riskier
+        reasons:
+          type: array
+          items: { $ref: '#/components/schemas/DecisionReason' }
+
+    DecisionReason:
+      type: object
+      properties:
+        ruleId: { type: string }
+        detail: { type: string }
+
+    FraudCheckResponse:
+      type: object
+      properties:
+        checkId: { type: string }
+        decision: { $ref: '#/components/schemas/Decision' }
+        evaluatedAt: { type: string, format: date-time }
+
+    RuleRequest:
+      type: object
+      required: [name, expression]
+      properties:
+        name: { type: string }
+        expression: { type: string }
+        enabled: { type: boolean, default: true }
+
+    Rule:
+      type: object
+      properties:
+        ruleId: { type: string }
+        name: { type: string }
+        expression: { type: string }
+        enabled: { type: boolean }
+
+    CaseRequest:
+      type: object
+      required: [checkId, reason]
+      properties:
+        checkId: { type: string }
+        reason: { type: string }
+
+    Case:
+      type: object
+      properties:
+        caseId: { type: string }
+        checkId: { type: string }
+        status:
+          type: string
+          enum: [OPEN, IN_REVIEW, CLOSED]
+        reason: { type: string }
+
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp: { type: string, format: date-time }
+        status: { type: integer }
+        error: { type: string }
+        path: { type: string }

@@ -1,0 +1,244 @@
+openapi: 3.1.0
+info:
+  title: Payments Service API
+  version: 2.1.0
+  description: >
+    Initiates, retrieves, cancels and refunds customer payments.
+    Every payment is fraud-screened before it is posted to the ledger.
+  contact:
+    name: Payments Platform Team
+    email: payments-platform@northbank.internal
+  x-service-name: payments
+  x-team-owner: Payments Platform
+  x-slack-channel: "#payments-platform"
+  x-migration-status: in_progress
+  x-criticality: crown-jewel
+  x-depends-on: [fraud, ledger, notifications]
+
+servers:
+  - url: https://api.northbank.internal/payments
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: payments
+
+paths:
+  /v2/payments:
+    post:
+      operationId: createPayment
+      summary: Create a payment
+      description: >
+        Initiates a payment from a funded account to a payee. Synchronously calls
+        the fraud service for a pre-authorization check (800ms timeout, fails closed),
+        then posts a double-entry record to the ledger service. Requires a unique
+        idempotency key per payment intent.
+      tags: [payments]
+      x-depends-on: [fraud, ledger]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+          description: Unique key per payment intent. Reusing a key returns 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaymentRequest' }
+      responses:
+        '201':
+          description: Payment accepted and queued for settlement
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentResponse' }
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '402':
+          description: Insufficient funds in the source account
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: Duplicate idempotency key. The key has already been used.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Fraud service unavailable. Payments fail closed by design.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    get:
+      operationId: listPayments
+      summary: List payments for an account
+      description: Returns a paginated list of payments for a given account.
+      tags: [payments]
+      parameters:
+        - name: accountId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING, SETTLED, REJECTED, CANCELLED, REFUNDED]
+        - name: limit
+          in: query
+          schema: { type: integer, default: 25, maximum: 100 }
+      responses:
+        '200':
+          description: A page of payments
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PaymentResponse' }
+
+  /v2/payments/{paymentId}:
+    get:
+      operationId: getPayment
+      summary: Get a payment by id
+      description: Retrieves the current state of a single payment.
+      tags: [payments]
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The payment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentResponse' }
+        '404':
+          description: Payment not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v2/payments/{paymentId}/cancel:
+    post:
+      operationId: cancelPayment
+      summary: Cancel a pending payment
+      description: >
+        Cancels a payment that has not yet settled. Reverses the pending ledger
+        entry. Payments already in SETTLED state must be refunded instead.
+      tags: [payments]
+      x-depends-on: [ledger]
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Payment cancelled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentResponse' }
+        '409':
+          description: Payment already settled and cannot be cancelled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v2/payments/{paymentId}/refund:
+    post:
+      operationId: refundPayment
+      summary: Refund a settled payment
+      description: >
+        Issues a full or partial refund against a settled payment. Posts a
+        reversing entry to the ledger and emits a customer notification.
+      tags: [payments]
+      x-depends-on: [ledger, notifications]
+      parameters:
+        - name: paymentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefundRequest' }
+      responses:
+        '201':
+          description: Refund accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentResponse' }
+        '422':
+          description: Refund amount exceeds the original payment amount
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT issued by the auth service. Scope payments:write is required for writes.
+
+  schemas:
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: number
+          description: Decimal amount. Never use floats in clients.
+        currency:
+          type: string
+          description: ISO-4217 currency code
+          examples: [CAD, USD]
+
+    PaymentRequest:
+      type: object
+      required: [sourceAccountId, payeeId, amount]
+      properties:
+        sourceAccountId: { type: string, description: Funded account to debit }
+        payeeId: { type: string, description: Registered payee identifier }
+        amount: { $ref: '#/components/schemas/Money' }
+        reference: { type: string, maxLength: 140 }
+
+    RefundRequest:
+      type: object
+      required: [amount, reason]
+      properties:
+        amount: { $ref: '#/components/schemas/Money' }
+        reason:
+          type: string
+          enum: [CUSTOMER_REQUEST, DUPLICATE, FRAUD_CONFIRMED, MERCHANT_ERROR]
+
+    PaymentResponse:
+      type: object
+      properties:
+        paymentId: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [PENDING, SETTLED, REJECTED, CANCELLED, REFUNDED]
+        amount: { $ref: '#/components/schemas/Money' }
+        ledgerEntryId:
+          type: string
+          description: Identifier of the corresponding entry in the ledger service
+        fraudScore:
+          type: number
+          description: Score returned by the fraud service pre-auth check (0.0 to 1.0)
+        createdAt: { type: string, format: date-time }
+
+    ErrorResponse:
+      type: object
+      properties:
+        code: { type: string, examples: [DUPLICATE_IDEMPOTENCY_KEY] }
+        message: { type: string }
+        traceId: { type: string }

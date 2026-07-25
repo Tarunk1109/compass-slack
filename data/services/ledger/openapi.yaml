@@ -1,0 +1,213 @@
+openapi: 3.1.0
+info:
+  title: Ledger Service API
+  version: 3.0.0
+  description: >
+    System of record for account balances. Every debit and credit in the
+    platform is posted here as a double-entry record. This is the one
+    service every other financial service ultimately depends on.
+  contact:
+    name: Core Banking Team
+    email: core-banking@northbank.internal
+  x-service-name: ledger
+  x-team-owner: Core Banking
+  x-slack-channel: "#core-banking"
+  x-migration-status: migrated
+  x-criticality: crown-jewel
+  x-depends-on: []
+
+servers:
+  - url: https://api.northbank.internal/ledger
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: ledger
+
+paths:
+  /v1/ledger/entries:
+    post:
+      operationId: postEntry
+      summary: Post a double-entry record
+      description: >
+        Posts a balanced double-entry record (one debit leg, one credit leg)
+        to the ledger. Rejects any request where debit and credit legs do not
+        sum to zero in the same currency.
+      tags: [ledger]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EntryRequest' }
+      responses:
+        '201':
+          description: Entry posted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EntryResponse' }
+        '422':
+          description: Debit and credit legs are not balanced
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v1/ledger/entries/{entryId}:
+    get:
+      operationId: getEntry
+      summary: Get a ledger entry by id
+      description: Retrieves a single posted entry, including both legs.
+      tags: [ledger]
+      parameters:
+        - name: entryId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The entry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EntryResponse' }
+        '404':
+          description: Entry not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v1/ledger/entries/{entryId}/reverse:
+    post:
+      operationId: reverseEntry
+      summary: Reverse a posted entry
+      description: >
+        Posts a new entry with debit and credit legs swapped relative to the
+        original. The original entry is never mutated or deleted; ledger
+        entries are append-only.
+      tags: [ledger]
+      parameters:
+        - name: entryId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '201':
+          description: Reversing entry posted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EntryResponse' }
+        '409':
+          description: Entry has already been reversed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v1/ledger/accounts/{accountId}/balance:
+    get:
+      operationId: getBalance
+      summary: Get the current balance for an account
+      description: >
+        Returns the current balance, computed as the sum of all posted
+        entries for the account. Always reflects settled entries only.
+      tags: [ledger]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Current balance
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BalanceResponse' }
+
+  /v1/ledger/accounts/{accountId}/entries:
+    get:
+      operationId: listEntriesForAccount
+      summary: List ledger entries for an account
+      description: Returns a paginated list of entries touching the given account.
+      tags: [ledger]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 25, maximum: 100 }
+      responses:
+        '200':
+          description: A page of entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EntryResponse' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT issued by the auth service. Scope ledger:write is required for writes.
+
+  schemas:
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: number
+          description: Decimal amount. Never use floats in clients.
+        currency:
+          type: string
+          description: ISO-4217 currency code
+          examples: [CAD, USD]
+
+    EntryLeg:
+      type: object
+      required: [accountId, direction, amount]
+      properties:
+        accountId: { type: string }
+        direction:
+          type: string
+          enum: [DEBIT, CREDIT]
+        amount: { $ref: '#/components/schemas/Money' }
+
+    EntryRequest:
+      type: object
+      required: [debitLeg, creditLeg, reason]
+      properties:
+        debitLeg: { $ref: '#/components/schemas/EntryLeg' }
+        creditLeg: { $ref: '#/components/schemas/EntryLeg' }
+        reason:
+          type: string
+          description: Human-readable reason, e.g. "payment settlement"
+        sourceService:
+          type: string
+          description: Name of the calling service, for audit purposes
+
+    EntryResponse:
+      type: object
+      properties:
+        entryId: { type: string, format: uuid }
+        debitLeg: { $ref: '#/components/schemas/EntryLeg' }
+        creditLeg: { $ref: '#/components/schemas/EntryLeg' }
+        reason: { type: string }
+        reversed: { type: boolean }
+        postedAt: { type: string, format: date-time }
+
+    BalanceResponse:
+      type: object
+      properties:
+        accountId: { type: string }
+        balance: { $ref: '#/components/schemas/Money' }
+        asOf: { type: string, format: date-time }
+
+    ErrorResponse:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        traceId: { type: string }

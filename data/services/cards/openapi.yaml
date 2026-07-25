@@ -1,0 +1,204 @@
+openapi: 3.1.0
+info:
+  title: Cards Service API
+  version: 1.0.0
+  description: >
+    Issues and manages debit and credit cards linked to customer accounts.
+  contact:
+    name: Cards Team
+    email: cards@northbank.internal
+  x-service-name: cards
+  x-team-owner: Cards
+  x-slack-channel: "#cards-team"
+  x-migration-status: not_started
+  x-criticality: high
+  x-depends-on: [ledger, fraud]
+
+servers:
+  - url: https://api.northbank.internal/cards
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: cards
+
+paths:
+  /v1/cards:
+    post:
+      operationId: issueCard
+      summary: Issue a new card
+      description: >
+        Issues a new physical or virtual card linked to an account. Runs a
+        fraud pre-check on the cardholder before issuance and creates a
+        holding entry in the ledger for the card program float.
+      tags: [cards]
+      x-depends-on: [ledger, fraud]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueCardRequest' }
+      responses:
+        '201':
+          description: Card issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CardResponse' }
+        '422':
+          description: Fraud pre-check declined the cardholder
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v1/cards/{cardId}:
+    get:
+      operationId: getCard
+      summary: Get a card by id
+      description: Retrieves card details. PAN is always masked in the response.
+      tags: [cards]
+      parameters:
+        - name: cardId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The card
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CardResponse' }
+        '404':
+          description: Card not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v1/cards/{cardId}/freeze:
+    post:
+      operationId: freezeCard
+      summary: Freeze a card
+      description: Immediately blocks all new authorizations on the card.
+      tags: [cards]
+      parameters:
+        - name: cardId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Card frozen
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CardResponse' }
+
+  /v1/cards/{cardId}/activate:
+    post:
+      operationId: activateCard
+      summary: Activate a card
+      description: Activates a newly issued card after the cardholder confirms receipt.
+      tags: [cards]
+      parameters:
+        - name: cardId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Card activated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CardResponse' }
+        '409':
+          description: Card is frozen or already active
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v1/cards/{cardId}/transactions:
+    get:
+      operationId: listCardTransactions
+      summary: List transactions for a card
+      description: Returns a paginated list of authorizations and settlements for a card.
+      tags: [cards]
+      parameters:
+        - name: cardId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 25, maximum: 100 }
+      responses:
+        '200':
+          description: A page of transactions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CardTransaction' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT issued by the auth service. Scope cards:write is required for writes.
+
+  schemas:
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: number
+          description: Decimal amount. Never use floats in clients.
+        currency:
+          type: string
+          description: ISO-4217 currency code
+          examples: [CAD, USD]
+
+    IssueCardRequest:
+      type: object
+      required: [accountId, cardType]
+      properties:
+        accountId: { type: string }
+        cardType:
+          type: string
+          enum: [PHYSICAL_DEBIT, VIRTUAL_DEBIT, PHYSICAL_CREDIT]
+
+    CardResponse:
+      type: object
+      properties:
+        cardId: { type: string }
+        accountId: { type: string }
+        cardType:
+          type: string
+          enum: [PHYSICAL_DEBIT, VIRTUAL_DEBIT, PHYSICAL_CREDIT]
+        status:
+          type: string
+          enum: [ISSUED, ACTIVE, FROZEN, CANCELLED]
+        maskedPan:
+          type: string
+          examples: ["**** **** **** 4321"]
+        issuedAt: { type: string, format: date-time }
+
+    CardTransaction:
+      type: object
+      properties:
+        transactionId: { type: string }
+        cardId: { type: string }
+        amount: { $ref: '#/components/schemas/Money' }
+        merchant: { type: string }
+        status:
+          type: string
+          enum: [AUTHORIZED, SETTLED, DECLINED, REVERSED]
+        occurredAt: { type: string, format: date-time }
+
+    ErrorResponse:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        traceId: { type: string }

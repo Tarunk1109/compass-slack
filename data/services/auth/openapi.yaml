@@ -1,0 +1,198 @@
+openapi: 3.1.0
+info:
+  title: Auth Service API
+  version: 1.4.0
+  description: >
+    Issues and validates JWTs for customers and internal services. Every other
+    service in the platform trusts tokens minted here.
+  contact:
+    name: Identity Platform Team
+    email: identity-platform@northbank.internal
+  x-service-name: auth
+  x-team-owner: Identity Platform
+  x-slack-channel: "#identity-platform"
+  x-migration-status: migrated
+  x-criticality: crown-jewel
+  x-depends-on: []
+
+servers:
+  - url: https://api.northbank.internal/auth
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: auth
+
+paths:
+  /v1/auth/login:
+    post:
+      operationId: login
+      summary: Authenticate a customer
+      description: >
+        Exchanges customer credentials for an access token and refresh token.
+        Access tokens are JWTs valid for 15 minutes.
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v1/auth/refresh:
+    post:
+      operationId: refreshToken
+      summary: Refresh an access token
+      description: >
+        Exchanges a valid refresh token for a new access token. Rotates the
+        refresh token; the old one is invalidated.
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: New token pair issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '401':
+          description: Refresh token expired or already used
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      summary: Revoke a refresh token
+      description: Invalidates the given refresh token so it can no longer be exchanged.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '204':
+          description: Token revoked
+
+  /v1/auth/introspect:
+    get:
+      operationId: introspectToken
+      summary: Validate a token and return its claims
+      description: >
+        Used by other services to check whether a bearer token is still valid
+        and to read its scopes and subject. Cached for 30 seconds by callers.
+      tags: [auth]
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Token claims
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IntrospectResponse' }
+        '401':
+          description: Token invalid or expired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v1/auth/service-tokens:
+    post:
+      operationId: createServiceToken
+      summary: Mint a service-to-service token
+      description: >
+        Issues a short-lived JWT for internal service-to-service calls, scoped
+        to the requesting service's allowed audiences. Requires mTLS.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServiceTokenRequest' }
+      responses:
+        '201':
+          description: Service token issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '403':
+          description: Requesting service not authorized for that audience
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT issued by this service.
+
+  schemas:
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string, format: password }
+
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+
+    ServiceTokenRequest:
+      type: object
+      required: [audience]
+      properties:
+        audience: { type: string, description: Target service name, e.g. "ledger" }
+        scopes:
+          type: array
+          items: { type: string }
+
+    TokenResponse:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        expiresIn: { type: integer, description: Seconds until access token expiry }
+
+    IntrospectResponse:
+      type: object
+      properties:
+        active: { type: boolean }
+        subject: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        expiresAt: { type: string, format: date-time }
+
+    ErrorResponse:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        traceId: { type: string }

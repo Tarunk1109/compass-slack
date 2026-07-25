@@ -1,0 +1,234 @@
+openapi: 3.1.0
+info:
+  title: kyc-service
+  version: "1.3"
+  description: Identity verification and document management API.
+
+servers:
+  - url: https://api.northbank.internal/kyc
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: kyc-controller
+
+paths:
+  /api/kyc/verifications:
+    post:
+      operationId: createUsingPOST
+      summary: Start an identity verification
+      description: >
+        Starts an identity verification for a customer against the supplied
+        documents and biographic data. Verification is asynchronous; poll
+        getUsingGET for the result.
+      tags: [kyc-controller]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerificationRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerificationResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    get:
+      operationId: getUsingGET_1
+      summary: getUsingGET_1
+      tags: [kyc-controller]
+      parameters:
+        - name: customerId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VerificationResponse' }
+
+  /api/kyc/verifications/{verificationId}:
+    get:
+      operationId: getUsingGET
+      summary: getUsingGET
+      tags: [kyc-controller]
+      parameters:
+        - name: verificationId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerificationResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/kyc/verifications/{verificationId}/decision:
+    post:
+      operationId: decisionUsingPOST
+      summary: Override a verification decision
+      description: >
+        Allows a compliance analyst to manually override an automated
+        verification outcome, with a required reason for audit.
+      tags: [kyc-controller]
+      parameters:
+        - name: verificationId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DecisionOverrideRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerificationResponse' }
+
+  /api/kyc/documents:
+    post:
+      operationId: uploadUsingPOST_1
+      summary: uploadUsingPOST_1
+      tags: [kyc-controller]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DocumentUploadRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+
+  /api/kyc/documents/{documentId}:
+    get:
+      operationId: getUsingGET_2
+      summary: getUsingGET_2
+      tags: [kyc-controller]
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    DocumentUploadRequest:
+      type: object
+      required: [customerId, documentType, fileRef]
+      properties:
+        customerId: { type: string }
+        documentType:
+          type: string
+          enum: [PASSPORT, DRIVERS_LICENSE, UTILITY_BILL]
+        fileRef: { type: string }
+
+    Document:
+      type: object
+      properties:
+        documentId: { type: string }
+        customerId: { type: string }
+        documentType:
+          type: string
+          enum: [PASSPORT, DRIVERS_LICENSE, UTILITY_BILL]
+        status:
+          type: string
+          enum: [UPLOADED, VERIFIED, REJECTED]
+
+    VerificationRequest:
+      type: object
+      required: [customerId, documentIds]
+      properties:
+        customerId: { type: string }
+        documentIds:
+          type: array
+          items: { type: string }
+        biographic: { $ref: '#/components/schemas/Biographic' }
+
+    Biographic:
+      type: object
+      properties:
+        legalName: { type: string }
+        dateOfBirth: { type: string, format: date }
+        address: { $ref: '#/components/schemas/Address' }
+
+    Address:
+      type: object
+      properties:
+        line1: { type: string }
+        city: { type: string }
+        province: { type: string }
+        postalCode: { type: string }
+
+    DecisionOverrideRequest:
+      type: object
+      required: [outcome, reason]
+      properties:
+        outcome:
+          type: string
+          enum: [PASS, FAIL]
+        reason: { type: string }
+        analystId: { type: string }
+
+    VerificationResponse:
+      type: object
+      properties:
+        verificationId: { type: string }
+        customerId: { type: string }
+        outcome:
+          type: string
+          enum: [PENDING, PASS, FAIL]
+        riskRating:
+          type: string
+          enum: [LOW, MEDIUM, HIGH]
+        documents:
+          type: array
+          items: { $ref: '#/components/schemas/Document' }
+        createdAt: { type: string, format: date-time }
+
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp: { type: string, format: date-time }
+        status: { type: integer }
+        error: { type: string }
+        path: { type: string }

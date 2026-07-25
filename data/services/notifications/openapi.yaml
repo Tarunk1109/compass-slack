@@ -1,0 +1,197 @@
+openapi: 3.1.0
+info:
+  title: Notifications Service API
+  version: 1.2.0
+  description: >
+    Sends transactional email, SMS, and push notifications to customers, and
+    stores per-customer notification preferences.
+  contact:
+    name: Comms Platform Team
+    email: comms-platform@northbank.internal
+  x-service-name: notifications
+  x-team-owner: Comms Platform
+  x-slack-channel: "#comms-platform"
+  x-migration-status: migrated
+  x-criticality: medium
+  x-depends-on: []
+
+servers:
+  - url: https://api.northbank.internal/notifications
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: notifications
+
+paths:
+  /v1/notifications/email:
+    post:
+      operationId: sendEmail
+      summary: Send a transactional email
+      description: >
+        Queues a transactional email for delivery. Respects the customer's
+        notification preferences; if they have opted out of the given
+        category, the send is silently skipped and logged.
+      tags: [notifications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailRequest' }
+      responses:
+        '202':
+          description: Queued for delivery
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationResponse' }
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v1/notifications/sms:
+    post:
+      operationId: sendSms
+      summary: Send a transactional SMS
+      description: Queues a transactional SMS for delivery, subject to preferences.
+      tags: [notifications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SmsRequest' }
+      responses:
+        '202':
+          description: Queued for delivery
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationResponse' }
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v1/notifications/{notificationId}:
+    get:
+      operationId: getNotification
+      summary: Get delivery status for a notification
+      description: Retrieves the current delivery status of a queued notification.
+      tags: [notifications]
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The notification
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationResponse' }
+        '404':
+          description: Notification not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /v1/notifications/preferences/{customerId}:
+    get:
+      operationId: getPreferences
+      summary: Get notification preferences for a customer
+      description: Returns which notification categories a customer has opted into.
+      tags: [notifications]
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Preferences
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreferencesResponse' }
+
+    put:
+      operationId: updatePreferences
+      summary: Update notification preferences for a customer
+      description: Replaces the customer's full set of notification preferences.
+      tags: [notifications]
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PreferencesResponse' }
+      responses:
+        '200':
+          description: Updated preferences
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreferencesResponse' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT issued by the auth service.
+
+  schemas:
+    EmailRequest:
+      type: object
+      required: [customerId, category, subject, body]
+      properties:
+        customerId: { type: string }
+        category:
+          type: string
+          enum: [PAYMENT_RECEIPT, REFUND, SECURITY_ALERT, MARKETING]
+        subject: { type: string }
+        body: { type: string }
+
+    SmsRequest:
+      type: object
+      required: [customerId, category, body]
+      properties:
+        customerId: { type: string }
+        category:
+          type: string
+          enum: [PAYMENT_RECEIPT, REFUND, SECURITY_ALERT, MARKETING]
+        body: { type: string, maxLength: 320 }
+
+    NotificationResponse:
+      type: object
+      properties:
+        notificationId: { type: string, format: uuid }
+        channel:
+          type: string
+          enum: [EMAIL, SMS, PUSH]
+        status:
+          type: string
+          enum: [QUEUED, SENT, FAILED, SKIPPED_PREFERENCE]
+        createdAt: { type: string, format: date-time }
+
+    PreferencesResponse:
+      type: object
+      properties:
+        customerId: { type: string }
+        optedIn:
+          type: array
+          items:
+            type: string
+            enum: [PAYMENT_RECEIPT, REFUND, SECURITY_ALERT, MARKETING]
+
+    ErrorResponse:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        traceId: { type: string }

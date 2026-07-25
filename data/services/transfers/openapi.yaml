@@ -1,0 +1,182 @@
+openapi: 3.1.0
+info:
+  title: transfers-service
+  version: "0.4"
+  description: Cross-account and cross-currency transfer orchestration API.
+  x-service-name: transfers
+  x-migration-status: in_progress
+  x-depends-on: [ledger, fx]
+
+servers:
+  - url: https://api.northbank.internal/transfers
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: transfers-controller
+
+paths:
+  /api/transfers:
+    post:
+      operationId: createTransferUsingPOST
+      summary: Create a transfer
+      description: >
+        Creates a transfer between two accounts. If source and destination
+        currencies differ, locks an fx rate first, then posts the
+        converted amount to the ledger as a single balanced entry.
+      tags: [transfers-controller]
+      x-depends-on: [ledger, fx]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransferRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransferResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    get:
+      operationId: getUsingGET_1
+      summary: getUsingGET_1
+      tags: [transfers-controller]
+      parameters:
+        - name: accountId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TransferResponse' }
+
+  /api/transfers/{transferId}:
+    get:
+      operationId: getUsingGET
+      summary: getUsingGET
+      tags: [transfers-controller]
+      parameters:
+        - name: transferId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransferResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/transfers/{transferId}/cancel:
+    post:
+      operationId: cancelUsingPOST_1
+      summary: cancelUsingPOST_1
+      tags: [transfers-controller]
+      parameters:
+        - name: transferId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TransferResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/transfers/{transferId}/rate-lock:
+    get:
+      operationId: getUsingGET_2
+      summary: getUsingGET_2
+      tags: [transfers-controller]
+      parameters:
+        - name: transferId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RateLockDetail' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: number }
+        currency: { type: string }
+
+    TransferRequest:
+      type: object
+      required: [sourceAccountId, destinationAccountId, amount]
+      properties:
+        sourceAccountId: { type: string }
+        destinationAccountId: { type: string }
+        amount: { $ref: '#/components/schemas/Money' }
+
+    RateLockDetail:
+      type: object
+      properties:
+        lockId: { type: string }
+        pair: { type: string, examples: [USD/CAD] }
+        rate: { type: number }
+        lockedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+
+    TransferResponse:
+      type: object
+      properties:
+        transferId: { type: string }
+        sourceAccountId: { type: string }
+        destinationAccountId: { type: string }
+        amount: { $ref: '#/components/schemas/Money' }
+        status:
+          type: string
+          enum: [PENDING, COMPLETED, CANCELLED, FAILED]
+        rateLock: { $ref: '#/components/schemas/RateLockDetail' }
+        createdAt: { type: string, format: date-time }
+
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp: { type: string, format: date-time }
+        status: { type: integer }
+        error: { type: string }
+        path: { type: string }

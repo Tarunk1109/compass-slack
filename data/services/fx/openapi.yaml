@@ -1,0 +1,153 @@
+openapi: 3.1.0
+info:
+  title: fx-service
+  version: "2.0"
+  description: Foreign exchange rate quoting and rate-lock API.
+
+servers:
+  - url: https://api.northbank.internal/fx
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: fx-controller
+
+paths:
+  /api/fx/rates/{pair}:
+    get:
+      operationId: getUsingGET
+      summary: Get the current exchange rate for a currency pair
+      description: >
+        Returns the current mid-market rate for a currency pair, e.g.
+        USD/CAD. Rates refresh every 10 seconds from the upstream provider.
+      tags: [fx-controller]
+      parameters:
+        - name: pair
+          in: path
+          required: true
+          schema: { type: string, examples: [USD/CAD] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RateResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/fx/rates:
+    get:
+      operationId: getUsingGET_2
+      summary: getUsingGET_2
+      tags: [fx-controller]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/RateResponse' }
+
+  /api/fx/rate-locks:
+    post:
+      operationId: createUsingPOST
+      summary: Lock a rate for a fixed window
+      description: >
+        Locks the current rate for a currency pair for 60 seconds, so a
+        caller can quote a customer a firm number while a transfer completes.
+      tags: [fx-controller]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RateLockRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RateLockResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/fx/rate-locks/{lockId}:
+    get:
+      operationId: getUsingGET_1
+      summary: getUsingGET_1
+      tags: [fx-controller]
+      parameters:
+        - name: lockId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RateLockResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    delete:
+      operationId: deleteUsingDELETE
+      summary: deleteUsingDELETE
+      tags: [fx-controller]
+      parameters:
+        - name: lockId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: No Content
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    RateResponse:
+      type: object
+      properties:
+        pair: { type: string }
+        rate: { type: number }
+        asOf: { type: string, format: date-time }
+
+    RateLockRequest:
+      type: object
+      required: [pair, notionalAmount]
+      properties:
+        pair: { type: string, examples: [USD/CAD] }
+        notionalAmount: { type: number }
+
+    RateLockResponse:
+      type: object
+      properties:
+        lockId: { type: string }
+        pair: { type: string }
+        rate: { type: number }
+        lockedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp: { type: string, format: date-time }
+        status: { type: integer }
+        error: { type: string }
+        path: { type: string }

@@ -1,0 +1,9 @@
+.venv
+.git
+.env
+.cache
+qdrant_data
+__pycache__
+*.pyc
+BUILD.md
+test_keys.py

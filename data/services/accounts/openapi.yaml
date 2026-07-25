@@ -1,0 +1,206 @@
+openapi: 3.1.0
+info:
+  title: Accounts Service API
+  version: 1.7.0
+  description: >
+    Manages customer account records: opening, closing, and profile lookups.
+    Does not hold balances; balances live in the ledger service.
+  contact:
+    name: Accounts Team
+    email: accounts@northbank.internal
+  x-service-name: accounts
+  x-team-owner: Accounts
+  x-slack-channel: "#accounts-team"
+  x-migration-status: in_progress
+  x-criticality: high
+  x-depends-on: [kyc]
+
+servers:
+  - url: https://api.northbank.internal/accounts
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: accounts
+
+paths:
+  /v1/accounts:
+    post:
+      operationId: openAccount
+      summary: Open a new account
+      description: >
+        Opens a new account for a customer. Synchronously requires a passed
+        KYC verification; accounts cannot be opened for a customer who has
+        not cleared identity verification.
+      tags: [accounts]
+      x-depends-on: [kyc]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpenAccountRequest' }
+      responses:
+        '201':
+          description: Account opened
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountResponse' }
+        '422':
+          description: Customer has not passed KYC verification
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    get:
+      operationId: listAccounts
+      summary: List accounts for a customer
+      description: Returns a paginated list of accounts owned by a customer.
+      tags: [accounts]
+      parameters:
+        - name: customerId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 25, maximum: 100 }
+      responses:
+        '200':
+          description: A page of accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AccountResponse' }
+
+  /v1/accounts/{accountId}:
+    get:
+      operationId: getAccount
+      summary: Get an account by id
+      description: Retrieves account details, not including balance.
+      tags: [accounts]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The account
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountResponse' }
+        '404':
+          description: Account not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    patch:
+      operationId: updateAccount
+      summary: Update account profile fields
+      description: Updates mutable fields on an account, such as nickname or address.
+      tags: [accounts]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAccountRequest' }
+      responses:
+        '200':
+          description: Updated account
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountResponse' }
+
+  /v1/accounts/{accountId}/close:
+    post:
+      operationId: closeAccount
+      summary: Close an account
+      description: >
+        Closes an account. Fails if the account has a nonzero balance;
+        callers must zero the balance out via the ledger service first.
+      tags: [accounts]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Account closed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountResponse' }
+        '409':
+          description: Account has a nonzero balance
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT issued by the auth service. Scope accounts:write is required for writes.
+
+  schemas:
+    OpenAccountRequest:
+      type: object
+      required: [customerId, kycVerificationId, accountType, currency]
+      properties:
+        customerId: { type: string }
+        kycVerificationId:
+          type: string
+          description: Id of a passed verification from the kyc service
+        accountType:
+          type: string
+          enum: [CHEQUING, SAVINGS]
+        currency:
+          type: string
+          description: ISO-4217 currency code
+          examples: [CAD, USD]
+
+    UpdateAccountRequest:
+      type: object
+      properties:
+        nickname: { type: string, maxLength: 60 }
+        address: { $ref: '#/components/schemas/Address' }
+
+    Address:
+      type: object
+      properties:
+        line1: { type: string }
+        city: { type: string }
+        province: { type: string }
+        postalCode: { type: string }
+
+    AccountResponse:
+      type: object
+      properties:
+        accountId: { type: string }
+        customerId: { type: string }
+        accountType:
+          type: string
+          enum: [CHEQUING, SAVINGS]
+        currency: { type: string }
+        status:
+          type: string
+          enum: [ACTIVE, CLOSED]
+        nickname: { type: string }
+        openedAt: { type: string, format: date-time }
+
+    ErrorResponse:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        traceId: { type: string }

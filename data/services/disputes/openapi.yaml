@@ -1,0 +1,193 @@
+openapi: 3.1.0
+info:
+  title: disputes-service
+  version: "0.7"
+  description: Customer dispute and chargeback case management API.
+
+servers:
+  - url: https://api.northbank.internal/disputes
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: disputes-controller
+
+paths:
+  /api/disputes:
+    post:
+      operationId: createUsingPOST
+      summary: Open a dispute against a payment
+      description: >
+        Opens a dispute against a settled payment. On creation, places a
+        provisional hold by posting a reversing entry to the ledger pending
+        investigation.
+      tags: [disputes-controller]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DisputeRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DisputeResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    get:
+      operationId: getUsingGET_1
+      summary: getUsingGET_1
+      tags: [disputes-controller]
+      parameters:
+        - name: accountId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DisputeResponse' }
+
+  /api/disputes/{disputeId}:
+    get:
+      operationId: getUsingGET
+      summary: getUsingGET
+      tags: [disputes-controller]
+      parameters:
+        - name: disputeId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DisputeResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/disputes/{disputeId}/evidence:
+    post:
+      operationId: addEvidenceUsingPOST_1
+      summary: addEvidenceUsingPOST_1
+      tags: [disputes-controller]
+      parameters:
+        - name: disputeId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EvidenceRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DisputeResponse' }
+
+  /api/disputes/{disputeId}/resolve:
+    post:
+      operationId: resolveUsingPOST_1
+      summary: resolveUsingPOST_1
+      tags: [disputes-controller]
+      parameters:
+        - name: disputeId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResolveRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DisputeResponse' }
+        default:
+          description: Error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: number }
+        currency: { type: string }
+
+    DisputeRequest:
+      type: object
+      required: [paymentId, reasonCode, amount]
+      properties:
+        paymentId: { type: string }
+        reasonCode:
+          type: string
+          enum: [FRAUD, NOT_RECEIVED, DUPLICATE, INCORRECT_AMOUNT]
+        amount: { $ref: '#/components/schemas/Money' }
+
+    EvidenceRequest:
+      type: object
+      required: [description]
+      properties:
+        description: { type: string }
+        fileRef: { type: string }
+
+    ResolveRequest:
+      type: object
+      required: [outcome]
+      properties:
+        outcome:
+          type: string
+          enum: [CUSTOMER_FAVOR, MERCHANT_FAVOR]
+        notes: { type: string }
+
+    DisputeResponse:
+      type: object
+      properties:
+        disputeId: { type: string }
+        paymentId: { type: string }
+        reasonCode:
+          type: string
+          enum: [FRAUD, NOT_RECEIVED, DUPLICATE, INCORRECT_AMOUNT]
+        amount: { $ref: '#/components/schemas/Money' }
+        status:
+          type: string
+          enum: [OPEN, EVIDENCE_SUBMITTED, RESOLVED]
+        createdAt: { type: string, format: date-time }
+
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp: { type: string, format: date-time }
+        status: { type: integer }
+        error: { type: string }
+        path: { type: string }
