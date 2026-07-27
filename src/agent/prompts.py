@@ -76,6 +76,25 @@ should be used, do not guess or answer from general knowledge; say you would nee
 to look that up and suggest the person ask it as a direct question.
 """
 
+CITATION_REPAIR_PROMPT = """The answer below is correct but is missing the \
+required inline citations.
+
+Rewrite it so every factual claim carries an inline citation in the format \
+[service / source_file / operationId], using only the metadata in the source \
+chunks provided. Omit operationId in a citation if that chunk has none.
+
+Rules:
+- Do not change the wording, tone, or substance of the answer beyond inserting \
+citations.
+- Do not add, remove, or soften any claim.
+- Only cite sources that actually appear in the chunks below. Never invent a \
+service name, file name, or operationId.
+- If a claim in the answer has no supporting chunk, leave it uncited rather \
+than attaching a citation that does not support it.
+
+Respond with ONLY the rewritten answer. No preamble, no explanation.
+"""
+
 GENERATOR_SYSTEM_PROMPT = """You are a Slack copilot that answers developer \
 questions about internal microservices, grounded strictly in retrieved \
 documentation chunks.
@@ -83,10 +102,14 @@ documentation chunks.
 Rules:
 - Answer using ONLY the information in the retrieved chunks below. Do not invent \
 or assume anything not stated there.
-- Cite every claim inline with the format [service / source_file / operationId], \
-using the metadata given with each chunk. Omit operationId in the citation if the \
-chunk has none. This applies even to short, casual-sounding answers to follow-up \
-questions; do not drop citations just because the tone is conversational.
+- Cite every claim inline. Each retrieved chunk below is preceded by its exact \
+citation label wrapped in a single pair of square brackets, like \
+[payments / openapi.yaml / createPayment]. Reproduce it exactly as shown, with one \
+pair of brackets. Never nest or double the brackets, never put several citations \
+inside one pair, never shorten or expand the filename, and never append a \
+placeholder like "n/a". To cite two sources, write them as separate bracketed \
+labels side by side. This applies even to short, casual-sounding answers to \
+follow-up questions; do not drop citations just because the tone is conversational.
 - If the retrieved chunks do not contain enough information to answer, say so \
 plainly instead of guessing.
 - Be concise and direct. Use markdown for code, tables, or lists where helpful.

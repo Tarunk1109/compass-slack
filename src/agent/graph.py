@@ -14,6 +14,7 @@ from langgraph.graph import END, START, StateGraph
 from src import config
 from src.agent.prompts import (
     CHITCHAT_SYSTEM_PROMPT,
+    CITATION_REPAIR_PROMPT,
     GENERATOR_SYSTEM_PROMPT,
     GRADER_PROMPT,
     REWRITE_PROMPT,
@@ -23,6 +24,27 @@ from src.mcp.server import get_migration_status, list_service_dependencies, sear
 
 MAX_RETRIES = 1
 HISTORY_TURNS = 3
+
+# Matches [service / source_file] and [service / source_file / operationId].
+CITATION_RE = re.compile(r"\[[^\]\n]*/[^\]\n]*\]")
+
+# Phrases that mean the model correctly declined to answer. Those answers have
+# nothing to cite, so they must not trigger a repair call.
+_REFUSAL_MARKERS = (
+    "couldn't find",
+    "could not find",
+    "don't have",
+    "do not have",
+    "no information",
+    "not documented",
+    "doesn't exist",
+    "does not exist",
+    "not enough information",
+)
+
+# Counts how often the generator drops citations and whether the repair worked.
+# Read this to quantify the gap rather than guess at it.
+CITATION_STATS = {"checked": 0, "missing": 0, "repaired": 0, "unrepairable": 0}
 
 _LANGFUSE_ENABLED = bool(os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY"))
 
@@ -209,6 +231,79 @@ def rewrite_query(state: AgentState) -> AgentState:
     return {"query": new_query, "retries": state["retries"] + 1}
 
 
+def _citation_label(result: dict) -> str:
+    """The exact citation string the generator should copy. Built here rather
+    than left to the model, which otherwise emits the same source three ways:
+    a bare filename, a full data/services/... path, and a trailing 'n/a' for
+    chunks that have no operationId."""
+    source_file = os.path.basename(result.get("source_file") or "")
+    parts = [result.get("service_name") or "unknown", source_file]
+    operation_id = result.get("operation_id")
+    if operation_id:
+        parts.append(operation_id)
+    return " / ".join(p for p in parts if p)
+
+
+# [[x], [y]] -> [x] [y], and [[x]] -> [x]. The model tends to wrap an already
+# bracketed label in a second pair, which prompting alone did not stop.
+_NESTED_CITATION_RE = re.compile(r"\[((?:\[[^\[\]]+\][,;]?\s*)+)\]")
+_DOUBLE_BRACKET_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
+
+
+def _normalize_citations(text: str) -> str:
+    """Deterministic cleanup of bracket shapes. Cheap, no model call, and it
+    cannot change the wording of the answer."""
+    previous = None
+    while previous != text:
+        previous = text
+        text = _NESTED_CITATION_RE.sub(
+            lambda m: re.sub(r"[,;]\s*", " ", m.group(1)).strip(), text
+        )
+        text = _DOUBLE_BRACKET_RE.sub(r"[\1]", text)
+    return text
+
+
+def _has_citation(text: str) -> bool:
+    return bool(CITATION_RE.search(text))
+
+
+def _looks_like_refusal(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _REFUSAL_MARKERS)
+
+
+@_observe(as_type="generation", name="repair_citations")
+def _repair_citations(answer: str, sources: str) -> str:
+    """Prompting alone cannot guarantee the citation format on every stylistic
+    variation, so verify it and repair once instead of trusting the generator.
+    Falls back to the original answer if the repair also comes back uncited,
+    since a correct uncited answer beats a dropped one."""
+    CITATION_STATS["checked"] += 1
+    answer = _normalize_citations(answer)
+    if not answer.strip() or _has_citation(answer) or _looks_like_refusal(answer):
+        return answer
+
+    CITATION_STATS["missing"] += 1
+    try:
+        repaired = _call_model(
+            config.GEN_MODEL,
+            CITATION_REPAIR_PROMPT,
+            f"Answer to repair:\n{answer}\n\nSource chunks:\n{sources}",
+            max_tokens=1000,
+        )
+    except Exception:
+        CITATION_STATS["unrepairable"] += 1
+        return answer
+
+    repaired = _normalize_citations(repaired)
+    if _has_citation(repaired):
+        CITATION_STATS["repaired"] += 1
+        return repaired
+
+    CITATION_STATS["unrepairable"] += 1
+    return answer
+
+
 @_observe(as_type="generation", name="generate")
 def generate(state: AgentState) -> AgentState:
     if not state.get("needs_retrieval", True):
@@ -228,8 +323,7 @@ def generate(state: AgentState) -> AgentState:
         return {"answer": answer, "history": [{"question": state["question"], "answer": answer}]}
 
     chunks_context = "\n\n---\n\n".join(
-        f"[{r['service_name']} / {r['source_file']} / {r.get('operation_id') or 'n/a'}]\n{r['chunk_text']}"
-        for r in results
+        f"[{_citation_label(r)}]\n{r['chunk_text']}" for r in results
     )
     history_text = _format_history(state.get("history", []))
     parts = []
@@ -243,6 +337,10 @@ def generate(state: AgentState) -> AgentState:
     user_content = "\n\n".join(parts)
 
     answer = _call_model(config.GEN_MODEL, GENERATOR_SYSTEM_PROMPT, user_content, max_tokens=1000)
+
+    sources = "\n\n".join(part for part in (state.get("extra_context"), chunks_context) if part)
+    answer = _repair_citations(answer, sources)
+
     return {"answer": answer, "history": [{"question": state["question"], "answer": answer}]}
 
 

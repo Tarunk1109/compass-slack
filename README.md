@@ -31,6 +31,7 @@ Compass:  Two services call fraud's pre-auth endpoint:
 - [Quick start](#quick-start)
 - [Configuration](#configuration)
 - [Usage](#usage)
+- [Testing](#testing)
 - [Evaluation](#evaluation)
 - [Project layout](#project-layout)
 - [The demo corpus](#the-demo-corpus)
@@ -294,6 +295,26 @@ The retrieval layer is exposed as five FastMCP tools, usable by any MCP client:
 | `get_migration_status(service_name)` | Status plus documented migration notes |
 | `list_service_dependencies(service_name)` | Forward and reverse dependency edges |
 
+## Testing
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+**119 tests, about 6 seconds, zero network calls and zero API cost.** Any accidental LLM call inside the chunking tests fails the run, which is what keeps the suite free to execute.
+
+Coverage is deliberately concentrated on the pure logic, which is both the most likely thing to break silently and the only part testable without spending money:
+
+| Area | What it protects |
+|---|---|
+| `test_parse_openapi.py` | Every spec in the corpus parses, including the deliberately messy ones. No dangling `$ref`s reach the generator. Missing `operationId` and absent `x-` extensions fall back instead of crashing. The planted dependency edges and migration statuses survive parsing. |
+| `test_chunk.py` | One chunk per endpoint, never split or merged. Chunk ids are stable across runs and unique corpus-wide, so re-ingestion cannot duplicate points. Endpoint chunks embed short text but store full text. Prose gotchas and ADRs become chunks. |
+| `test_parse_prose.py` | Heading splitting, breadcrumb prefixes, nested and sibling heading handling, oversized section splitting, and `doc_type` inference from filename. |
+| `test_citations.py` | Citation label construction, bracket normalization, refusal detection, and the repair pass including its fallback behavior. |
+
+Two invariants are pinned as exact numbers, so silent drift in parsing or chunking fails the build rather than quietly changing what gets retrieved: the corpus produces **62 endpoints** and **175 chunks**.
+
 ## Evaluation
 
 `eval/golden.jsonl` holds 50 questions across 10 categories: endpoint lookups, dependency impact, migration status, planted README gotchas, messy spec robustness, shared schemas, multi-turn follow-ups, chitchat, adversarial and refusal cases, and ambiguous questions flagged for manual review.
@@ -311,7 +332,18 @@ The harness runs every question through the real system (real Qdrant, real Coher
 Three of the five failures were the eval's own assertions being too strict, for example expecting the literal string `in_progress` where the model correctly said "mid-migration". Two were real bugs, both since fixed:
 
 - The router skipped retrieval for questions phrased as general advice-seeking ("should I use floats for money amounts"), so Claude answered from training knowledge and contradicted the actual `Money` schema. Fixed by broadening the router rule and adding a safety net to the chitchat prompt.
-- A follow-up answer was correct and grounded but dropped the citation format in casual conversational tone. Prompt reinforcement improved this but did not fully close it. See [Known limitations](#known-limitations).
+- A follow-up answer was correct and grounded but dropped the citation format in casual conversational tone. Prompt reinforcement improved this but did not fully close it, so it is now handled structurally instead. See [Citation integrity](#citation-integrity).
+
+## Citation integrity
+
+Every answer is supposed to carry inline `[service / source_file / operationId]` citations. Prompting got that to roughly 95%, and no amount of prompt wording closed the rest, because the model is non-deterministic. Since "every answer is auditable" is the whole pitch, the gap is now closed with checks rather than requests:
+
+1. **The citation label is built in code, not by the model.** Each retrieved chunk is presented to the generator with its exact citation string already formed, so the model copies rather than composes.
+2. **Bracket shapes are normalized deterministically** after generation. No model call, and it cannot alter the wording of the answer.
+3. **Answers are verified, and repaired once if uncited.** A missing citation triggers a single repair pass that re-cites the answer against the same chunks. Refusals are exempt, since they have nothing to cite and repairing them would invite an invented source. If the repair still comes back uncited, the original answer is kept, because a correct uncited answer beats a dropped one.
+4. **`CITATION_STATS` counts how often each path fires**, so the gap is measured rather than assumed.
+
+This was built after a live dry run surfaced three concrete defects that prompting had not caught: a trailing `n/a` on chunks with no operationId (present in 8 of 10 distinct citation forms), the same source cited both as `README.md` and as `data/services/payments/README.md`, and doubled brackets like `[[payments / README.md]]`. All three are now impossible by construction and covered by tests.
 
 ## Project layout
 
@@ -386,13 +418,13 @@ This is deliberately part of the pitch, not an afterthought. An auditable trace 
 
 Honest list. Details and proposed fixes in [ROADMAP.md](ROADMAP.md).
 
-- **Citation format is not guaranteed.** The generator occasionally drops the `[service / file / operation]` format on casual follow-ups. Prompting alone cannot fully fix this; a post-processing verify-and-repair pass is the reliable structural fix.
 - **Conversation memory is in-process.** `MemorySaver` means history resets on restart. A SQLite or Postgres checkpointer is the natural next step.
 - **Cohere trial keys cap at 10 calls per minute.** Retry with backoff handles bursts gracefully, but real multi-user usage needs a paid tier.
 - **No access control.** Any Slack user can ask about any service, including migration status and fraud rules. Real rollout needs role-based filtering on what is retrievable.
 - **Ingestion is full-rebuild only.** Every run re-embeds everything, and deleted endpoints leave orphaned points behind. Fine at 175 chunks, wasteful and wrong at real scale.
 - **Reverse dependency lookup is an O(n) scan.** `list_service_dependencies` scrolls every endpoint chunk. Needs a payload index or a precomputed graph.
-- **No unit tests, no CI.** Everything has been verified by CLI runs and the eval harness. The parsing and chunking logic is the most likely thing to break silently.
+- **No CI.** The test suite exists and passes, but nothing runs it automatically on push. Retrieval and generation are also still untested, since testing them costs real API calls.
+- **The generator sometimes cites the injected dependency metadata** as `[structured service metadata: ...]` rather than a real file. Honest, since that block genuinely is the source, but inconsistent with the file-based citation format.
 - **Slack native streaming is faked.** Real token streaming and suggested prompts did not fire reliably on the sandbox workspace used here, so answers are generated fully then appended in slices, with a plain-DM handler as a fallback.
 - **DM only.** Channel support is not implemented.
 - **Third-party data flow.** Every question and retrieved chunk goes to Cohere and Anthropic. Fine for synthetic data; the first compliance question for real internal specs.
@@ -401,12 +433,13 @@ Honest list. Details and proposed fixes in [ROADMAP.md](ROADMAP.md).
 
 See [ROADMAP.md](ROADMAP.md) for the full list. Highest-value next steps:
 
-1. **Persistent checkpointer** so conversation memory survives restarts
-2. **LLM-as-judge groundedness scoring** to replace hand-tuned keyword assertions in the eval
-3. **Citation repair pass** to close the format-compliance gap structurally
+1. **CI** running the existing test suite and OpenAPI spec validation on every push
+2. **Persistent checkpointer** so conversation memory survives restarts
+3. **LLM-as-judge groundedness scoring** to replace hand-tuned keyword assertions in the eval
 4. **Incremental ingestion** with change detection and stale-point pruning
-5. **Unit tests plus CI** on the parsing and chunking layer, with spec validation on every change
-6. **Embedder bake-off** (Cohere vs Voyage vs OpenAI) quantified against the existing gold set
+5. **Embedder bake-off** (Cohere vs Voyage vs OpenAI) quantified against the existing gold set
+
+Done since the first release: [citation integrity](#citation-integrity) and the [test suite](#testing).
 
 ## Further reading
 
